@@ -1,3 +1,6 @@
+## Simulation test for 4 comparison models
+## No Proposed model code included
+
 library(FDAimage)
 library(MASS)
 library(matrixcalc)
