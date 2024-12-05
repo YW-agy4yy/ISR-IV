@@ -218,7 +218,7 @@ PGD_stop <- function(Y, Z_matrix, D.est, theta_init, lambda_1, lambda_2, a=0.000
       shrinkage_factor <- max(1 - a * lambda_2 * weight.vec[ell]/norm_grp_alpha[ell], 0)
       theta_tilde[,(ell+2)] <- shrinkage_factor * grp_alpha
     }
-    est_BQ2beta0 <- matrix(rep(BQ2 %*% theta_tilde[,1], each=50), nrow=50, byrow=TRUE)
+    est_BQ2beta0 <- matrix(rep(BQ2 %*% theta_tilde[,1], each=n), nrow=n, byrow=TRUE)
     est_BQ2beta1 <- tcrossprod(D.est,BQ2 %*% theta_tilde[,2])
     est_ZBQ2alpha <- tcrossprod(Z_matrix,(BQ2 %*% theta_tilde[,3:12]))
     residual.matrix <- Y - est_BQ2beta0 - est_BQ2beta1-est_ZBQ2alpha
