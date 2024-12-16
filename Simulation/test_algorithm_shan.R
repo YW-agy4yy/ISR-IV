@@ -1,7 +1,7 @@
 # Test PGD_Stop Algorithm
 # Data Load: data_v1.RData
 # v1: No CV, No optimization of gradient 1
-
+rm(list=ls())
 library(FDAimage)
 library(MASS)
 library(matrixcalc)
@@ -11,6 +11,7 @@ library(fields)
 library(sisVIVE)
 
 set.seed(12345)
+source("fit.FDAimage.ho.full.R")
 
 #### Data Generation ####
 ### Setting 1: 
@@ -215,10 +216,12 @@ PGD_stop <- function(theta_init, lambda_1, lambda_2, a=0.0001,
     term2 <- lambda_1*(crossprod(theta_tilde[,1],P)%*%theta_tilde[,1] +
                          crossprod(theta_tilde[,2],P)%*%theta_tilde[,2])
     term1 <- mean((residual.matrix)^2)
+    cat("dim:", dim(residual.matrix), "\n")
+    term3 <- lambda_2*sum(sapply(1:L, function(ell) sqrt(sum(theta_tilde[,ell+2]^2))))
     print(k)
     #print(mean(abs(residual.matrix)))
     print(paste("mse: ", round(mean((residual.matrix)^2),3)))
-    loss.vec[k] <- term1 + term2
+    loss.vec[k] <- term1 + term2 + term3
     diff <- sqrt(sum((theta_tilde-theta_tilde.last)^2))
     last_l2 <- sqrt(sum(theta_tilde.last))
     loss_diff.1 <- (loss.vec[k-1]-loss.vec[k])/loss.vec[k-1]
@@ -264,18 +267,26 @@ lamc=cv$lamc
 mfit0=fit.FDAimage.ho.full(Y,D_const.est2,loc,V,Tr,d,r,lamc)
 theta_init_2 = matrix(0, ncol = 2 + ncol(Z_matrix), nrow = nq)
 theta_init_2[, 1:4] = mfit0$theta.mtx
+beta.oracle = mfit0$beta[[1]][, 1:2]
 
-m9 <- PGD_stop(theta_init=theta_init, lambda_1=0.00001, lambda_2=0.01, a=5, num_iterations=100, stop = "estimator")
-m9 <- PGD_stop(theta_init=theta_init_2, lambda_1=0.00001, lambda_2=0.01, a=5, num_iterations=100, stop = "estimator")
-
-m10 <- PGD_stop(theta_init=theta_init, lambda_1=0.00001, lambda_2=0.01, a=5, num_iterations=100, stop = "loss")
+m9 <- PGD_stop(theta_init=theta_init, lambda_1=0.00001, lambda_2=0.01, a=20, num_iterations=100, stop = "estimator")
 loss.vec <- m9$loss
-plot(x=1:100,loss.vec, type = "l")
+plot(x=1:length(loss.vec),loss.vec, type = "l")
 
-theta_prop <- m10$theta_tilde
+m9_2 <- PGD_stop(theta_init=theta_init_2, lambda_1=0.00001, lambda_2=0.01, a=3, num_iterations=100, stop = "estimator")
+loss.vec_2 <- m9_2$loss
+plot(x=1:length(loss.vec_2),loss.vec_2, type = "l")
+
+theta_prop <- m9$theta_tilde
 beta.prop <- data.frame(matrix(ncol = 2, nrow = n_pos))
 beta.prop[,1] <- BQ2 %*% theta_prop[,1]
 beta.prop[,2] <- BQ2 %*% theta_prop[,2]
+
+theta_prop_2 <- m9_2$theta_tilde
+beta.prop_2 <- data.frame(matrix(ncol = 2, nrow = n_pos))
+beta.prop_2[,1] <- BQ2 %*% theta_prop_2[,1]
+beta.prop_2[,2] <- BQ2 %*% theta_prop_2[,2]
+
 beta.init <- data.frame(matrix(ncol = 2, nrow = n_pos))
 beta.init[,1] <- BQ2 %*% theta_init[,1]
 beta.init[,2] <- BQ2 %*% theta_init[,2]
@@ -300,4 +311,6 @@ rect.plot(beta.init[,2],c(-0.5,9),est.name = "Initial")
 apply(beta.prop - beta.init, 2, function(x) mean(x^2))
 apply(beta.true - beta.init, 2, function(x) mean(x^2))
 apply(beta.true - beta.prop, 2, function(x) mean(x^2))
+apply(beta.true - beta.prop_2, 2, function(x) mean(x^2))
+apply(beta.true - beta.oracle, 2, function(x) mean(x^2))
 apply(beta.true - beta.sisv, 2, function(x) mean(x^2))
