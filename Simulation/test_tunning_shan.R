@@ -1,17 +1,16 @@
-# Test PGD_Stop Algorithm
-# Data Load: data_v1.RData
-# v1: No CV, No optimization of gradient 1
-rm(list=ls())
+# Test tunning with BIC and evaluate by MISE
+# - Stop by first increased loss
+# - weight: unsquared
+# - sample size: 50
+
 library(FDAimage)
 library(MASS)
 library(matrixcalc)
 library(ivreg)
 library(sisVIVE)
 library(fields)
-library(sisVIVE)
 
 set.seed(12345)
-source("fit.FDAimage.ho.full.R")
 
 #### Data Generation ####
 ### Setting 1: 
@@ -25,7 +24,7 @@ source("fit.FDAimage.ho.full.R")
 
 
 # settings
-n <- 100
+n <- 50
 sigma_star <- 0.3
 lambda1 <- 0.1; lambda2 <- 0.02
 
@@ -54,8 +53,12 @@ beta.true <- cbind(beta0, beta1)
 alpha_mat <- matrix(0, ncol = L, nrow = n_pos)  # 7505*10
 alpha_1 <- 5 * ((xx - 0.5)^2 + (yy - 0.5)^2)  
 alpha_2 <- 3 * ((xx - 1)^2 + (yy - 1)^2)
+alpha_3 <- 1.5 * ((xx - 2)^2 + 2 * (yy - 0.2)^2)
+alpha_4 <-  ((xx - 1)^2 + 2.5 * (yy - 1.2)^2)
 alpha_mat[,1] <- alpha_1
 alpha_mat[,2] <- alpha_2
+alpha_mat[,3] <- alpha_3
+alpha_mat[,4] <- alpha_3
 
 # coefficient: gamma.true (11)
 # (5) relative strength = equal 0.5
@@ -169,13 +172,20 @@ theta_beta_init[,2] <- as.vector(solve(XtX, Xty))
 end.time <- Sys.time()
 end.time - start.time # 0.0236
 
-#### Proposed + Stop ####
+#### Proposed + Stop + weighted group lasso ####
 d.fit <- lm(D~Z_matrix)
 D.est <- d.fit$fitted.values
 theta_init <- cbind(theta_beta_init,theta_alpha_init)
 
-PGD_stop <- function(theta_init, lambda_1, lambda_2, a=0.0001, 
+PGD_stop <- function(Y, Z_matrix, D.est, theta_init, lambda_1, lambda_2, a=0.0001, 
                      num_iterations=30, stop="loss"){
+  L = ncol(Z_matrix)
+  X = cbind(rep(1,n),D.est,Z_matrix)
+  ## weight in adaptive lasso calculation
+  init_l2norm <- sqrt(colSums(theta_init[, -(1:2)]^2))
+  
+  weight.vec <- 1/(init_l2norm + abs(rnorm(L, sd=0.001)))
+  
   theta_tilde <- theta_init
   residual.matrix <- data.frame(matrix(ncol = n_pos, nrow = n))
   loss.vec <- rep(NA,num_iterations)
@@ -186,129 +196,173 @@ PGD_stop <- function(theta_init, lambda_1, lambda_2, a=0.0001,
     #### Step 1: Gradient ####
     # (1) Gradient 1
     grad1 <- rep(0, nq * (2+L))
-    for (i in 1:n) {
-      residual <- Y[i, ] - 
-        BQ2 %*% theta_tilde[,1]-
-        (D.est[i]) * BQ2 %*% theta_tilde[,2] -
-        rowSums(sapply(1:L, function(ell) Z_matrix[i, ell]*(BQ2 %*% theta_tilde[,ell+2])))
-      innergrad <- cbind(BQ2, (D.est[i])*BQ2,
-                         do.call(cbind,lapply(1:L, function(ell) Z_matrix[i, ell]*BQ2)))
-      grad1 <- grad1 + crossprod(residual,innergrad)
-    }
+    Yhat <- tcrossprod(X,(BQ2 %*% as.matrix(theta_tilde)))
+    residual.matrix <- Y - Yhat
+    grad1 <- rowSums(sapply(1:n, function(iter) 
+      as.matrix(kronecker(X[iter, ], crossprod(BQ2, residual.matrix[iter, ])))))
     # (2) Gradient 2
     P <- as.matrix(crossprod(Q2,K)%*%Q2) ## 15*15
     Dlam <- lambda_1*P
     grad2 <- c(Dlam %*% theta_tilde[,1], Dlam %*% theta_tilde[,2],rep(0,nq*L))
-    theta_tilde_vec <- theta_tilde_vec + a*(grad1/(n*n_pos)-grad2)
-    theta_tilde <- matrix(theta_tilde_vec, nrow = 15, ncol = 12)
-    
+    theta_tilde_vec <- theta_tilde_vec + 2*a*(grad1/(n*n_pos)-grad2)
+    cat("gradient norm: ", sqrt(sum((grad1/(n*n_pos)-grad2)^2)), "\n")
+    theta_tilde <- matrix(theta_tilde_vec, nrow = nq, ncol = L+2)
+    norm_grp_alpha <- rep(NA, L)
     #### Step 2: Proximal ####
     for (ell in 1:L) {
       grp_alpha <- theta_tilde[,(ell+2)]
-      norm_grp_alpha <- sqrt(sum(grp_alpha^2))
-      shrinkage_factor <- max(1 - a * lambda_2 /norm_grp_alpha, 0)
+      norm_grp_alpha[ell] <- sqrt(sum(grp_alpha^2))
+      shrinkage_factor <- max(1 - a * lambda_2 * weight.vec[ell]/norm_grp_alpha[ell], 0)
       theta_tilde[,(ell+2)] <- shrinkage_factor * grp_alpha
     }
-    est_BQ2beta0 <- matrix(rep(BQ2 %*% theta_tilde[,1], each=n), nrow=n, byrow=TRUE)
-    est_BQ2beta1 <- tcrossprod(D.est,BQ2 %*% theta_tilde[,2])
-    est_ZBQ2alpha <- tcrossprod(Z_matrix,(BQ2 %*% theta_tilde[,3:12]))
-    residual.matrix <- Y - est_BQ2beta0 - est_BQ2beta1-est_ZBQ2alpha
+    residual.matrix <- Y - tcrossprod(X,(BQ2 %*% as.matrix(theta_tilde)))
+    term1 <- mean((residual.matrix)^2)
     term2 <- lambda_1*(crossprod(theta_tilde[,1],P)%*%theta_tilde[,1] +
                          crossprod(theta_tilde[,2],P)%*%theta_tilde[,2])
-    term1 <- mean((residual.matrix)^2)
-    term3 <- lambda_2*sum(sapply(1:L, function(ell) sqrt(sum(theta_tilde[,ell+2]^2))))
+    term3 <- lambda_2*(weight.vec%*%norm_grp_alpha)
     print(k)
-    print(paste("mse: ", round(mean((residual.matrix)^2),3)))
+    print(paste("residual^2: ", round(mean((residual.matrix)^2),3)))
     loss.vec[k] <- term1 + term2 + term3
-    diff <- sqrt(sum((theta_tilde-theta_tilde.last)^2))
-    last_l2 <- sqrt(sum(theta_tilde.last))
-    loss_diff.1 <- (loss.vec[k-1]-loss.vec[k])/loss.vec[k-1]
-    loss_diff.2 <- (loss.vec[k-2]-loss.vec[k-1])/loss.vec[k-2]
-    loss_diff.3 <- (loss.vec[k-3]-loss.vec[k-2])/loss.vec[k-3]
-    print(paste("# of 0s in alpha:", sum(theta_tilde[,3:12] == 0)))
-    print(paste("estimator_l2_diff =",round(diff, 5)))
-    print(paste("last_estimator_l2 =",round(last_l2, 5)))
-    if(k>3){
-      print(paste0("loss_diff:", round(loss_diff.3,5),sep = " ",round(loss_diff.2,5),sep = " ",round(loss_diff.1,5)))
-      print(paste0("loss(-3,-2,-1):", round(loss.vec[k-3],5),sep = " ",round(loss.vec[k-2],5),sep = " ",round(loss.vec[k-1],5)))
-    }
-    ### Stop 1: L2 of Difference between theta_tilde/L2 of last theta_tilde
-    if (stop == "estimator"){
-      if (diff < 0.005*last_l2){
-        break
-      }
-    }
-    ### Stop 2: Loss of difference/Last loss
-    if (k>2 && stop == "loss"){
-      loss_diff.0 <- (loss.vec[1]-loss.vec[2])/loss.vec[2]
-      if (loss_diff.1/loss_diff.0 < 0.1){
-        break
-      }
-      #if (loss_diff.1<0.00005){
-      #  break
-      #}
-    }
   }
-  list(theta_tilde=theta_tilde, residual=residual.matrix, loss=loss.vec)
+  mse <- mean((residual.matrix)^2)
+  list(theta_tilde=theta_tilde, residual=residual.matrix, loss=loss.vec, mse=mse)
 }
 
-nfold = 5
+# nfold = 5
 d.fit <- lm(D~Z_matrix)
 D.est <- d.fit$fitted.values
 D_const.est <- cbind(rep(1,n),D.est)
-D_const.est2 <- cbind(D_const.est, Z_matrix[,c(1,2)])
+D_const.est2 <- cbind(D_const.est, Z_matrix[,c(1:4)])
 iter=1
 lambda=10^(seq(-6,6,by=1))
 Y = as.matrix(Y)
-cv=cv.FDAimage(Y,D_const.est2,loc,V,Tr,d,r,lambda,nfold,iter)
-lamc=cv$lamc
+lamc=10
 mfit0=fit.FDAimage.ho.full(Y,D_const.est2,loc,V,Tr,d,r,lamc)
 theta_init_2 = matrix(0, ncol = 2 + ncol(Z_matrix), nrow = nq)
-theta_init_2[, 1:4] = mfit0$theta.mtx
+theta_init_2[, 1:ncol(mfit0$theta.mtx)] = mfit0$theta.mtx
 beta.oracle = mfit0$beta[[1]][, 1:2]
+m.001$theta_tilde[1:10,1:2]
+#### lambda2 test ####
+m.001 <- PGD_stop(Y=Y, Z_matrix=Z_matrix, D.est=D.est, 
+                  theta_init=theta_init,  
+                  lambda_1=10/(n_pos*n), lambda_2=0.001, a=0.2, num_iterations=500, 
+                  stop ="loss.min")
 
-m9 <- PGD_stop(theta_init=theta_init, lambda_1=0.00001, lambda_2=1, a=10, num_iterations=100, stop = "estimator")
-loss.vec <- m9$loss
+loss.vec <- m.001$loss
 plot(x=1:length(loss.vec),loss.vec, type = "l")
 
-m9_2 <- PGD_stop(theta_init=theta_init_2, lambda_1=0.00001, lambda_2=1, a=5, num_iterations=100, stop = "estimator")
-loss.vec_2 <- m9_2$loss
-plot(x=1:length(loss.vec_2),loss.vec_2, type = "l")
+m.01 <- PGD_stop(Y=Y, Z_matrix=Z_matrix, D.est=D.est, theta_init=theta_init,  
+                 lambda_1=10/(n_pos*n), lambda_2=0.01, a=0.2, num_iterations=150, 
+                 stop ="loss.min")
+# 0.2 - 78 steps - Loss: 16.49044
+# "# of 0s in alpha: 120" (initial: 90)
+loss.vec <- m.01$loss
+plot(x=1:150,loss.vec, type = "l")
 
-theta_prop <- m9$theta_tilde
-beta.prop <- data.frame(matrix(ncol = 2, nrow = n_pos))
-beta.prop[,1] <- BQ2 %*% theta_prop[,1]
-beta.prop[,2] <- BQ2 %*% theta_prop[,2]
 
-theta_prop_2 <- m9_2$theta_tilde
-beta.prop_2 <- data.frame(matrix(ncol = 2, nrow = n_pos))
-beta.prop_2[,1] <- BQ2 %*% theta_prop_2[,1]
-beta.prop_2[,2] <- BQ2 %*% theta_prop_2[,2]
+m.0.1 <- PGD_stop(Y=Y, Z_matrix=Z_matrix, D.est=D.est, 
+                  theta_init=theta_init,  
+                  lambda_1=10/(n_pos*n), lambda_2=0.1, a=5, num_iterations=500, 
+                  stop ="loss.min")
+comp.mise(m.0.1) 
+apply(beta.true - beta.oracle, 2, function(x) mean(x^2))
+head(cbind(theta_init[, 1:2], m.0.1$theta_tilde[, 1:2], mfit0$theta.mtx[, 1:2]))
+loss.vec <- m.0.1$loss
+plot(x=1:length(loss.vec),loss.vec, type = "l")
+
+# 0.2 -  steps - Loss: 16.80303
+# "# of 0s in alpha: 120" (initial: 105)
+
+
+m.1 <- PGD_stop(Y=Y, Z_matrix=Z_matrix, D.est=D.est, 
+                  theta_init=theta_init,  
+                  lambda_1=10/(n_pos*n), lambda_2=1, a=1, num_iterations=500, 
+                  stop ="loss.min")
+comp.mise(m.1) 
+loss.vec <- m.1$loss
+plot(x=1:length(loss.vec),loss.vec, type = "l")
+# 0.2 -  59 steps - Loss: 19.70179
+# "# of 0s in alpha: 120" (initial: 120)
+# 0.1 -  137 steps - Loss: 19.055
+# "# of 0s in alpha: 120" (initial: 120)
+
+m.10 <- PGD_stop(Y=Y, Z_matrix=Z_matrix, D.est=D.est, theta_init=theta_init,  
+                 lambda_1=10/(n_pos*n), lambda_2=10, a=0.2, num_iterations=150, 
+                 stop ="loss.min")
+# 0.2 -  42 steps -  Loss: 39.23
+# of 0s in alpha: 135" (initial 120)
+# 0.1 - 132 steps - Loss: 32.279
+# of 0s in alpha: 135" (initial 120)
+loss.vec <- m.10$loss[30:42]
+plot(x=30:42,loss.vec, type = "l", ylim = c(35,45))
+
+m.100 <- PGD_stop(Y=Y, Z_matrix=Z_matrix, D.est=D.est, theta_init=theta_init,  
+                  lambda_1=10/(n_pos*n), lambda_2=100, a=0.2, num_iterations=150, 
+                  stop ="loss.min")
+# 0.2 - 18 steps - Loss: 225.11714
+# of 0s in alpha: 135" (init: 120)
+# 0.1 - 73 steps - Loss: 124.4931
+# of 0s in alpha: 150" (init: 120)
+# 0.01 - 150 steps - Loss: 94.89121
+# of 0s in alpha: 135 (init: 120) --- not convinced
+loss.vec <- m.100$loss[1:18]
+plot(x=1:18,loss.vec, type = "l",ylim = c(150,285))
+
+
+m.1000 <- PGD_stop(Y=Y, Z_matrix=Z_matrix, D.est=D.est, theta_init=theta_init,  
+                   lambda_1=10/(n_pos*n), lambda_2=1000, a=0.2, num_iterations=500, 
+                   stop ="loss.min")
+# 0.2 - 4 steps - Loss: 2157.87497
+# 0.1 - 65 steps - Loss: 1042.75247
+# 0.01 - 150 steps - Loss: 127.55319
+# 0.001 - 150 steps - loss: 716.76694
+# "# of 0s in alpha: 150" (init: 135)
+loss.vec <- m.1000$loss
+plot(x=1:length(loss.vec),loss.vec, type = "l")
+
+t3.bic <- function(m.test, eta = 0.5){
+  log.mse <- log(m.test$mse)
+  theta_alpha <- m.test$theta_tilde[,3:12]
+  n <- dim(m.test$residual)[1]
+  n_pos <- dim(m.test$residual)[2]
+  n_basis <- dim(theta_alpha)[1]
+  p <- dim(theta_alpha)[2]
+  card.I <- sum(theta_alpha != 0)/n_basis
+  p.alpha <- card.I*(log(n) + 2*eta*log(p*n_basis))/n
+  bic <- log.mse + p.alpha
+  return(bic)
+}
+
+t3.bic(m.001) 
+t3.bic(m.01) 
+t3.bic(m.0.1) 
+t3.bic(m.1)  
+t3.bic(m.10) 
+t3.bic(m.100) 
+t3.bic(m.1000) 
+
+
+### MISE
+comp.mise<- function(mtest){
+  theta_prop <- mtest$theta_tilde
+  beta.prop <- data.frame(matrix(ncol = 2, nrow = n_pos))
+  beta.prop[,1] <- BQ2 %*% theta_prop[,1]
+  beta.prop[,2] <- BQ2 %*% theta_prop[,2]
+  mise <- apply(beta.true - beta.prop, 2, function(x) mean(x^2))
+  return(mise)
+}
 
 beta.init <- data.frame(matrix(ncol = 2, nrow = n_pos))
 beta.init[,1] <- BQ2 %*% theta_init[,1]
 beta.init[,2] <- BQ2 %*% theta_init[,2]
-
-rect.plot <- function(betai,zlim,est.name){
-  z1 <-u1; z2 <- v1;
-  n1 <- length(z1); n2 <- length(z2);
-  betai.mtx <- matrix(betai,ncol=n1,nrow=n2)
-  image.plot(z2, z1, betai.mtx, zlim = zlim, main = est.name)
-}
-
-rect.plot(beta.init[,1],c(-5,5),est.name = "Initial")
-rect.plot(beta.true[,1],c(-5,5),est.name = "True")
-rect.plot(beta.prop[,1],c(-5,5),est.name = "Proposed")
-rect.plot(beta.init[,1],c(-5,5),est.name = "Initial")
-
-rect.plot(beta.init[,2],c(-0.5,9), est.name = "Initial")
-rect.plot(beta.true[,2],c(-0.5,9),est.name = "True")
-rect.plot(beta.prop[,2],c(-0.5,9),est.name = "Proposed")
-rect.plot(beta.init[,2],c(-0.5,9),est.name = "Initial")
-
-apply(beta.prop - beta.init, 2, function(x) mean(x^2))
 apply(beta.true - beta.init, 2, function(x) mean(x^2))
-apply(beta.true - beta.prop, 2, function(x) mean(x^2))
-apply(beta.true - beta.prop_2, 2, function(x) mean(x^2))
 apply(beta.true - beta.oracle, 2, function(x) mean(x^2))
-apply(beta.true - beta.sisv, 2, function(x) mean(x^2))
+
+comp.mise(m.001) 
+comp.mise(m.01) 
+comp.mise(m.0.1) 
+comp.mise(m.1)  
+comp.mise(m.10) 
+comp.mise(m.100) 
+comp.mise(m.1000)
+

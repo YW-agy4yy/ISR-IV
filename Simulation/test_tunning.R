@@ -9,7 +9,6 @@ library(matrixcalc)
 library(ivreg)
 library(sisVIVE)
 library(fields)
-library(sisVIVE)
 
 set.seed(12345)
 
@@ -182,7 +181,8 @@ PGD_stop <- function(Y, Z_matrix, D.est, theta_init, lambda_1, lambda_2, a=0.000
                      num_iterations=30, stop="loss"){
   ## weight in adaptive lasso calculation
   init_l2norm <- sqrt(colSums(theta_init[, 3:12]^2))
-  weight.vec <- 1/init_l2norm 
+  
+  weight.vec <- 1/(init_l2norm + abs(rnorm(L, sd=0.001)))
   
   theta_tilde <- theta_init
   residual.matrix <- data.frame(matrix(ncol = n_pos, nrow = n))
@@ -209,7 +209,7 @@ PGD_stop <- function(Y, Z_matrix, D.est, theta_init, lambda_1, lambda_2, a=0.000
     Dlam <- lambda_1*P
     grad2 <- c(Dlam %*% theta_tilde[,1], Dlam %*% theta_tilde[,2],rep(0,nq*L))
     theta_tilde_vec <- theta_tilde_vec + a*(grad1/(n*n_pos)-grad2)
-    theta_tilde <- matrix(theta_tilde_vec, nrow = 15, ncol = 12)
+    theta_tilde <- matrix(theta_tilde_vec, nrow = nq, ncol = L+2)
     norm_grp_alpha <- rep(NA, L)
     #### Step 2: Proximal ####
     for (ell in 1:L) {
@@ -220,7 +220,7 @@ PGD_stop <- function(Y, Z_matrix, D.est, theta_init, lambda_1, lambda_2, a=0.000
     }
     est_BQ2beta0 <- matrix(rep(BQ2 %*% theta_tilde[,1], each=n), nrow=n, byrow=TRUE)
     est_BQ2beta1 <- tcrossprod(D.est,BQ2 %*% theta_tilde[,2])
-    est_ZBQ2alpha <- tcrossprod(Z_matrix,(BQ2 %*% theta_tilde[,3:12]))
+    est_ZBQ2alpha <- tcrossprod(Z_matrix,(BQ2 %*% theta_tilde[,3:(L+2)]))
     residual.matrix <- Y - est_BQ2beta0 - est_BQ2beta1-est_ZBQ2alpha
     term1 <- mean((residual.matrix)^2)
     term2 <- lambda_1*(crossprod(theta_tilde[,1],P)%*%theta_tilde[,1] +
@@ -342,6 +342,21 @@ loss.vec <- m.001$loss
 plot(x=1:150,loss.vec, type = "l")
 
 
+nfold = 5
+d.fit <- lm(D~Z_matrix)
+D.est <- d.fit$fitted.values
+D_const.est <- cbind(rep(1,n),D.est)
+D_const.est2 <- cbind(D_const.est, Z_matrix[,c(1,2)])
+iter=1
+lambda=10^(seq(-6,6,by=1))
+Y = as.matrix(Y)
+cv=cv.FDAimage(Y,D_const.est2,loc,V,Tr,d,r,lambda,nfold,iter)
+lamc=cv$lamc
+mfit0=fit.FDAimage.ho.full(Y,D_const.est2[, 1:2],loc,V,Tr,d,r,lamc)
+theta_init_2 = matrix(0, ncol = 2 + ncol(Z_matrix), nrow = nq)
+theta_init_2[, 1:4] = mfit0$theta.mtx
+beta.oracle = mfit0$beta[[1]][, 1:2]
+
 m.01 <- PGD_stop(Y=Y, Z_matrix=Z_matrix, D.est=D.est, theta_init=theta_init,  
                  lambda_1=10/(n_pos*n), lambda_2=0.01, a=0.2, num_iterations=150, 
                  stop ="loss.min")
@@ -393,7 +408,7 @@ plot(x=1:18,loss.vec, type = "l",ylim = c(150,285))
 
 
 m.1000 <- PGD_stop(Y=Y, Z_matrix=Z_matrix, D.est=D.est, theta_init=theta_init,  
-                   lambda_1=10/(n_pos*n), lambda_2=1000, a=0.001, num_iterations=150, 
+                   lambda_1=10/(n_pos*n), lambda_2=1000, a=0.01, num_iterations=500, 
                    stop ="loss.min")
 # 0.2 - 4 steps - Loss: 2157.87497
 # 0.1 - 65 steps - Loss: 1042.75247
@@ -401,7 +416,7 @@ m.1000 <- PGD_stop(Y=Y, Z_matrix=Z_matrix, D.est=D.est, theta_init=theta_init,
 # 0.001 - 150 steps - loss: 716.76694
 # "# of 0s in alpha: 150" (init: 135)
 loss.vec <- m.1000$loss
-plot(x=1:150,loss.vec, type = "l", ylim = c(920,980))
+plot(x=1:length(loss.vec),loss.vec, type = "l")
 
 
 #### BIC calc--separation ####
@@ -431,6 +446,19 @@ t2.bic <- function(m.test){
   return(bic)
 }
 
+t3.bic <- function(m.test, eta = 0.1){
+  log.mse <- log(m.test$mse)
+  theta_alpha <- m.test$theta_tilde[,3:12]
+  n <- dim(m.test$residual)[1]
+  n_pos <- dim(m.test$residual)[2]
+  n_basis <- dim(theta_alpha)[1]
+  p <- dim(theta_alpha)[2]
+  card.I <- sum(theta_alpha != 0)/n_basis
+  p.alpha <- card.I*(log(n) + 2*eta*log(p*n_basis))/n
+  bic <- log.mse + p.alpha
+  return(bic)
+}
+
 
 t1.bic(m.001) 
 t1.bic(m.01) 
@@ -447,6 +475,15 @@ t2.bic(m.1)
 t2.bic(m.10) 
 t2.bic(m.100) 
 t2.bic(m.1000) 
+
+t3.bic(m.001) 
+t3.bic(m.01) 
+t3.bic(m.0.1) 
+t3.bic(m.1)  
+t3.bic(m.10) 
+t3.bic(m.100) 
+t3.bic(m.1000) 
+
 
 ### MISE
 comp.mise<- function(mtest){
@@ -468,5 +505,5 @@ comp.mise(m.0.1)
 comp.mise(m.1)  
 comp.mise(m.10) 
 comp.mise(m.100) 
-
+comp.mise(m.1000)
 
