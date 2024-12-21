@@ -228,98 +228,6 @@ PGD_stop <- function(Y, Z_matrix, D.est, theta_init, lambda_1, lambda_2, a=0.000
   list(theta_tilde=theta_tilde, residual=residual.matrix, loss=loss.vec, mse=mse)
 }
 
-# nfold = 5
-d.fit <- lm(D~Z_matrix)
-D.est <- d.fit$fitted.values
-D_const.est <- cbind(rep(1,n),D.est)
-D_const.est2 <- cbind(D_const.est, Z_matrix[,c(1:4)])
-iter=1
-lambda=10^(seq(-6,6,by=1))
-Y = as.matrix(Y)
-lamc=10
-mfit0=fit.FDAimage.ho.full(Y,D_const.est2,loc,V,Tr,d,r,lamc)
-theta_init_2 = matrix(0, ncol = 2 + ncol(Z_matrix), nrow = nq)
-theta_init_2[, 1:ncol(mfit0$theta.mtx)] = mfit0$theta.mtx
-beta.oracle = mfit0$beta[[1]][, 1:2]
-m.001$theta_tilde[1:10,1:2]
-#### lambda2 test ####
-m.001 <- PGD_stop(Y=Y, Z_matrix=Z_matrix, D.est=D.est, 
-                  theta_init=theta_init,  
-                  lambda_1=10/(n_pos*n), lambda_2=0.001, a=0.2, num_iterations=500, 
-                  stop ="loss.min")
-
-loss.vec <- m.001$loss
-plot(x=1:length(loss.vec),loss.vec, type = "l")
-
-m.01 <- PGD_stop(Y=Y, Z_matrix=Z_matrix, D.est=D.est, theta_init=theta_init,  
-                 lambda_1=10/(n_pos*n), lambda_2=0.01, a=0.2, num_iterations=150, 
-                 stop ="loss.min")
-# 0.2 - 78 steps - Loss: 16.49044
-# "# of 0s in alpha: 120" (initial: 90)
-loss.vec <- m.01$loss
-plot(x=1:150,loss.vec, type = "l")
-
-
-m.0.1 <- PGD_stop(Y=Y, Z_matrix=Z_matrix, D.est=D.est, 
-                  theta_init=theta_init,  
-                  lambda_1=10/(n_pos*n), lambda_2=0.1, a=5, num_iterations=500, 
-                  stop ="loss.min")
-comp.mise(m.0.1) 
-apply(beta.true - beta.oracle, 2, function(x) mean(x^2))
-head(cbind(theta_init[, 1:2], m.0.1$theta_tilde[, 1:2], mfit0$theta.mtx[, 1:2]))
-loss.vec <- m.0.1$loss
-plot(x=1:length(loss.vec),loss.vec, type = "l")
-
-# 0.2 -  steps - Loss: 16.80303
-# "# of 0s in alpha: 120" (initial: 105)
-
-
-m.1 <- PGD_stop(Y=Y, Z_matrix=Z_matrix, D.est=D.est, 
-                  theta_init=theta_init,  
-                  lambda_1=10/(n_pos*n), lambda_2=1, a=1, num_iterations=500, 
-                  stop ="loss.min")
-comp.mise(m.1) 
-loss.vec <- m.1$loss
-plot(x=1:length(loss.vec),loss.vec, type = "l")
-# 0.2 -  59 steps - Loss: 19.70179
-# "# of 0s in alpha: 120" (initial: 120)
-# 0.1 -  137 steps - Loss: 19.055
-# "# of 0s in alpha: 120" (initial: 120)
-
-m.10 <- PGD_stop(Y=Y, Z_matrix=Z_matrix, D.est=D.est, theta_init=theta_init,  
-                 lambda_1=10/(n_pos*n), lambda_2=10, a=0.2, num_iterations=150, 
-                 stop ="loss.min")
-# 0.2 -  42 steps -  Loss: 39.23
-# of 0s in alpha: 135" (initial 120)
-# 0.1 - 132 steps - Loss: 32.279
-# of 0s in alpha: 135" (initial 120)
-loss.vec <- m.10$loss[30:42]
-plot(x=30:42,loss.vec, type = "l", ylim = c(35,45))
-
-m.100 <- PGD_stop(Y=Y, Z_matrix=Z_matrix, D.est=D.est, theta_init=theta_init,  
-                  lambda_1=10/(n_pos*n), lambda_2=100, a=0.2, num_iterations=150, 
-                  stop ="loss.min")
-# 0.2 - 18 steps - Loss: 225.11714
-# of 0s in alpha: 135" (init: 120)
-# 0.1 - 73 steps - Loss: 124.4931
-# of 0s in alpha: 150" (init: 120)
-# 0.01 - 150 steps - Loss: 94.89121
-# of 0s in alpha: 135 (init: 120) --- not convinced
-loss.vec <- m.100$loss[1:18]
-plot(x=1:18,loss.vec, type = "l",ylim = c(150,285))
-
-
-m.1000 <- PGD_stop(Y=Y, Z_matrix=Z_matrix, D.est=D.est, theta_init=theta_init,  
-                   lambda_1=10/(n_pos*n), lambda_2=1000, a=0.2, num_iterations=500, 
-                   stop ="loss.min")
-# 0.2 - 4 steps - Loss: 2157.87497
-# 0.1 - 65 steps - Loss: 1042.75247
-# 0.01 - 150 steps - Loss: 127.55319
-# 0.001 - 150 steps - loss: 716.76694
-# "# of 0s in alpha: 150" (init: 135)
-loss.vec <- m.1000$loss
-plot(x=1:length(loss.vec),loss.vec, type = "l")
-
 t3.bic <- function(m.test, eta = 0.5){
   log.mse <- log(m.test$mse)
   theta_alpha <- m.test$theta_tilde[,3:12]
@@ -333,15 +241,6 @@ t3.bic <- function(m.test, eta = 0.5){
   return(bic)
 }
 
-t3.bic(m.001) 
-t3.bic(m.01) 
-t3.bic(m.0.1) 
-t3.bic(m.1)  
-t3.bic(m.10) 
-t3.bic(m.100) 
-t3.bic(m.1000) 
-
-
 ### MISE
 comp.mise<- function(mtest){
   theta_prop <- mtest$theta_tilde
@@ -352,17 +251,27 @@ comp.mise<- function(mtest){
   return(mise)
 }
 
-beta.init <- data.frame(matrix(ncol = 2, nrow = n_pos))
-beta.init[,1] <- BQ2 %*% theta_init[,1]
-beta.init[,2] <- BQ2 %*% theta_init[,2]
-apply(beta.true - beta.init, 2, function(x) mean(x^2))
-apply(beta.true - beta.oracle, 2, function(x) mean(x^2))
+#### lambda2 test ####
+lambda_2_all <- c(0.001, 0.01, 0.1, 1, 10, 100, 1000)
+bic_all <- rep(NA, length(lambda_2_all))
+mise_all <- matrix(NA, length(lambda_2_all),2)
+invalid_set <- list()
 
-comp.mise(m.001) 
-comp.mise(m.01) 
-comp.mise(m.0.1) 
-comp.mise(m.1)  
-comp.mise(m.10) 
-comp.mise(m.100) 
-comp.mise(m.1000)
+# record computation time
+start.time <- Sys.time()
+for (iter in 1:length(lambda_2_all)){
+  m.fit <- PGD_stop(Y=Y, Z_matrix=Z_matrix, D.est=D.est, 
+                    theta_init=theta_init,  
+                    lambda_1=10/(n_pos*n), lambda_2=lambda_2_all[iter], 
+                    a=5, num_iterations=500, 
+                    stop ="loss.min")
+  theta_norm <- apply(m.fit$theta_tilde[, -c(1:2)], 2, 
+                      function(x) norm(x, type = "F")^2) 
+  invalid_set[[iter]] <- which(theta_norm != 0)
+  mise_all[iter,] <- comp.mise(m.fit)
+  bic_all[iter] <- t3.bic(m.fit)
+}
+end.time <- Sys.time()
+end.time - start.time
+
 
