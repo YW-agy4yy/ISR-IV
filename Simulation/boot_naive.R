@@ -77,7 +77,7 @@ for (i in 1:nboot) {
   X <- cbind(rep(1,n), D_star, Z_matrix)
   Y_star <- tcrossprod(X,(BQ2 %*% as.matrix(theta_prop))) + nu*R.hat
   X_sub <- cbind(rep(1,n), D_star, Z_sub)
-  fit.b <- fit.FDAimage(Y,X_sub,loc,V,Tr,d,r,lamc)
+  fit.b <- fit.FDAimage(Y_star,X_sub,loc,V,Tr,d,r,lamc)
   
   beta_b_hat <- fit.b$beta[,2]
   print(i)
