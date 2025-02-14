@@ -384,3 +384,81 @@ X <- cbind(D_const.est, Z_orac)
 
 save.image(paste0("/home/agy4yy/ISR_IV/output/test_",seed,".RData"))
 
+
+
+rect.plot <- function(betai,zlim,est.name){
+  z1 <-u1; z2 <- v1;
+  n1 <- length(z1); n2 <- length(z2);
+  betai.mtx <- matrix(betai,ncol=n1,nrow=n2)
+  #col <- colorRampPalette(c("red", "white", "blue"),space = "Lab")
+  image.plot(z2, z1, betai.mtx, zlim = zlim, legend.shrink = 0.8, cex=10,
+             legend.width = 1.2, main = est.name, xlab = "", ylab = "", lwd = 1)
+}
+
+compute_mse <- function(input_array, beta.true) {
+  mse_beta1 <- mean(apply(input_array[,,1], 1, function(x) mean((beta.true[,1]-x)^2)))
+  mse_beta2 <- mean(apply(input_array[,,2], 1, function(x) mean((beta.true[,2]-x)^2)))
+  return(c(mse_beta1, mse_beta2))
+}
+
+rep=200
+#rep=4
+prop_beta <- array(rep(NA, rep*7505*2), dim = c(rep,7505,2))
+sisv_beta <- array(rep(NA, rep*7505*2), dim = c(rep,7505,2))
+bpst_beta <- array(rep(NA, rep*7505*2), dim = c(rep,7505,2))
+bpor_beta <- array(rep(NA, rep*7505*2), dim = c(rep,7505,2))
+tsls_beta <- array(rep(NA, rep*7505*2), dim = c(rep,7505,2))
+invalid_set <- list()
+for(seed in 1:rep){
+  #dir_out <- "/home/agy4yy/ISR_IV/output_sigma0.1/"
+  dir_out <- "/home/agy4yy/ISR_IV/output/"
+  load(paste0(dir_out,"test_",seed,".RData"))
+  dim(beta.true)
+  theta_prop <- m.fit$theta_tilde
+  beta.prop <- data.frame(matrix(ncol = 2, nrow = n_pos))
+  beta.prop <- BQ2 %*% theta_prop[,1:2]
+  prop_beta[seed,,] <- beta.prop
+  tsls_beta[seed,,] <- as.matrix(beta.2sls)
+  sisv_beta[seed,,] <-  as.matrix(beta.sisv)
+  bpst_beta[seed,,] <-  as.matrix(beta.bpst)
+  bpor_beta[seed,,] <- beta.bpor[,c(1,2)]
+  
+  theta_norm <- apply(m.fit$theta_tilde[, -c(1:2)], 2, 
+                    function(x) sum(x)) 
+  # Z_sub <- Z_matrix[, theta_norm != 0]
+  invalid_set[[seed]] <- which(theta_norm != 0)
+  
+  print(seed)
+}
+
+compute_mse(tsls_beta, beta.true)
+compute_mse(sisv_beta, beta.true)
+compute_mse(bpst_beta, beta.true)
+compute_mse(bpor_beta, beta.true)
+compute_mse(prop_beta, beta.true)
+
+pdf("b1_true.pdf", width = 8, height = 7)
+rect.plot(beta.true[,2],c(-0.5,5), est.name = "True")
+dev.off()
+
+pdf("b1_2sls.pdf", width = 8, height = 7)
+rect.plot(beta.2sls[,2],c(-0.5,5), est.name = "2SLS")
+dev.off()
+
+pdf("b1_sisv.pdf", width = 8, height = 7)
+rect.plot(beta.sisv[,2],c(-0.5,5), est.name = "sisVIVE")
+dev.off()
+
+pdf("b1_bpst.pdf", width = 8, height = 7)
+rect.plot(beta.bpst[,2],c(-0.5,5), est.name = "BPST")
+dev.off()
+
+pdf("b1_bpor.pdf", width = 8, height = 7)
+rect.plot(beta.bpor[,2],c(-0.5,5), est.name = "Oracle")
+dev.off()
+
+pdf("b1_prop.pdf", width = 8, height = 7)
+rect.plot(beta.prop[,2],c(-0.5,5), est.name = "Proposed")
+dev.off()
+
+
